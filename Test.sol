@@ -1,6 +1,36 @@
-pragma solidity >=0.4.22 <0.6.0;
+pragma experimental ABIEncoderV2;
 
-contract Test
+contract Owned
+{
+    address payable private owner;
+    
+    constructor() public payable
+    {
+        owner = msg.sender;
+    }
+    
+    modifier OnlyOwner
+    {
+        require
+        (
+            msg.sender == owner,
+            'error 1'
+        );
+        _;
+    }
+    
+    function ChangeOwner(address payable newOwner) public OnlyOwner
+    {
+        owner = newOwner;
+    }
+    
+    function GetOwner() public returns (address)
+    {
+        return owner;
+    }
+}
+
+contract ROSReestr is Owned
 {
     enum RequestType {NewHome, EditHome}
     
@@ -25,13 +55,16 @@ contract Test
         string homeAddress;
         uint area;
         uint cost;
+        bool isExist;
     }
     
     struct Request
     {
         RequestType requestType;
-        Home home;
+        Home home; 
+        bool isProcessed;
         uint result;
+        address adr;
     }
     
     struct Employee
@@ -39,13 +72,66 @@ contract Test
         string name;
         string position;
         string phoneNumber;
+        bool isset;
     }
     
     mapping(address => Employee) private employees;
     mapping(address => Owner) private owners;
     mapping(address => Request) private requests;
+    address[] requestsInitiator;
     mapping(string => Home) private homes;
     mapping(string => Ownership[]) private ownerships;
+    
+    uint private amount;
+    uint256 private prize = 100 wei;
+    
+    modifier OnlyEmployee
+    {
+        require
+        (
+            employees[msg.sender].isset != false,
+            'error 2'
+        );
+        _;
+    }
+    
+    modifier Costs(uint256 _value)
+    {
+        require(
+            msg.value >= _value,
+            'error 3'
+            );
+            _;
+    }
+    
+    function AddOwnership(string memory _homeAddress, address _owner, uint _p) public
+    {
+        Ownership memory o;
+        o.homeAddress = _homeAddress;
+        o.owner = _owner;
+        o.p = _p;
+        ownerships[_homeAddress].push(o);
+    }
+    
+    function EditOwnership(string memory _homeAddress, address _owner, uint _p) public
+    {
+       // ownerships[_homeAddress].owner = _owner;
+        //ownerships[_homeAddress].p = _p;
+    }
+    
+    function DeleteOwnership(string memory _homeAddress, address _owner) public
+    {
+        delete ownerships[_homeAddress]; //TODO переделать
+    }
+    
+    //string homeAddress;
+    //address owner;
+    //uint p;
+    
+    function GetOwnership(string memory homeAddress) public returns(Ownership[] memory)
+    {
+        return (ownerships[homeAddress]);
+    }
     
     function AddHome(string memory _adr, uint _area, uint _cost) public
     {
@@ -53,6 +139,7 @@ contract Test
         h.homeAddress = _adr;
         h.area = _area;
         h.cost = _cost;
+        h.isExist = true;
         homes[_adr] = h;
     }
     
@@ -61,29 +148,117 @@ contract Test
         return (homes[adr].area, homes[adr].cost);
     }
     
-    function AddEmployee(address _adr, string memory _name, string memory _pos, string memory _phone) public
+    function EditHome(string memory _adr, uint _area, uint _cost) public
+    {
+        homes[_adr].area = _area;
+        homes[_adr].cost = _cost;
+    }
+    
+    function AddEmployee(address _adr, string memory _name, string memory _position, string memory _phoneNumber) public OnlyOwner
     {
         Employee memory e;
         e.name = _name;
-        e.position = _pos;
-        e.phoneNumber = _phone;
+        e.position = _position;
+        e.phoneNumber = _phoneNumber;
+        e.isset = true;
         employees[_adr] = e;
     }
     
-    function EditEmployee(address _adr, string memory _name, string memory _pos, string memory _phone) public
-    {
-        employees[_adr].name = _name;
-        employees[_adr].position = _pos;
-        employees[_adr].phoneNumber = _phone;
-    }
-    
-    function GetEmployee(address adr) public returns(string memory _name, string memory _pos, string memory _phone)
+    function GetEmployee(address adr) public OnlyOwner returns(string memory _name, string memory _position, string memory _phoneNumber)
     {
         return (employees[adr].name, employees[adr].position, employees[adr].phoneNumber);
     }
     
-    function DeleteEmployee(address adr) public
+    function EditEmployee(address _adr, string memory _name, string memory _position, string memory _phoneNumber) public OnlyOwner
     {
-        delete employees[adr];
+        employees[_adr].name = _name;
+        employees[_adr].position = _position;
+        employees[_adr].phoneNumber = _phoneNumber;
+    }
+    
+    function DeleteEmployee(address _adr) public OnlyOwner returns(bool)
+    {
+        if (employees[_adr].isset == true)
+        {
+            delete employees[_adr];
+            return true;
+        }
+        return false;
+    }
+    
+    function AddRequest(uint _rType, string memory _homeAddress, uint _area, uint _cost, address _newOwner) public payable Costs(prize) returns(bool)
+    {
+        Home memory h;
+        h.homeAddress = _homeAddress;
+        h.area = _area;
+        h.cost = _cost;
+        Request memory r;
+        r.requestType = _rType == 0? RequestType.NewHome : RequestType.EditHome;
+        r.home = h;
+        r.result = 0;
+        r.adr = _rType == 0 ? address(0) : _newOwner;
+        r.isProcessed = false;
+        requests[msg.sender] = r;
+        requestsInitiator.push(msg.sender);
+        amount += msg.value;
+        return true;
+    }
+    
+    function GetRequest() public OnlyEmployee view returns (uint[] memory, uint[] memory, string[] memory)
+    {
+        uint[] memory ids = new uint[](requestsInitiator.length);
+        uint[] memory types = new uint[](requestsInitiator.length);
+        string[] memory homeAddress = new string[](requestsInitiator.length);
+        for(uint i = 0; i != requestsInitiator.length; i++)
+        {
+            ids[i] = i;
+            types[i] = requests[requestsInitiator[i]].requestType == RequestType.NewHome ? 0 : 1;
+            homeAddress[i] = requests[requestsInitiator[i]].home.homeAddress;
+        }
+        return (ids, types, homeAddress);
+    }
+    
+    function DeleteRequest(uint _reqId) public
+    {
+        delete requests[requestsInitiator[_reqId]];
+    }
+    
+    function ChangePrice(uint256 _newPrice) public OnlyOwner
+    {
+        prize = _newPrice;
+    }
+    
+    function GetPrice() public view returns(uint256, string memory)
+    {
+        return (prize, " wei");
+    }
+    
+    function Obrabotka(uint _reqId) public OnlyEmployee returns(string memory)
+    {
+        if (requests[requestsInitiator[_reqId]].requestType == RequestType.NewHome)
+        {
+            if(homes[requests[requestsInitiator[_reqId]].home.homeAddress].isExist == false)
+            {
+                AddHome(requests[requestsInitiator[_reqId]].home.homeAddress,requests[requestsInitiator[_reqId]].home.area, requests[requestsInitiator[_reqId]].home.cost);
+                DeleteRequest(_reqId);
+                delete requestsInitiator[_reqId];
+                return "Home dobablen!";
+            }
+           
+        }
+        else
+        {
+            if(homes[requests[requestsInitiator[_reqId]].home.homeAddress].isExist == true)
+            {
+                EditHome(requests[requestsInitiator[_reqId]].home.homeAddress,requests[requestsInitiator[_reqId]].home.area, requests[requestsInitiator[_reqId]].home.cost);
+                DeleteRequest(_reqId);
+                delete requestsInitiator[_reqId];
+                return "Home edited";
+            }
+            else
+            {
+                return "Home ne exist";
+            }
+        }
     }
 }
